@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import (
     TYPE_CHECKING,
@@ -24,6 +25,8 @@ from qcodes.parameters import MultiParameter, ParameterBase
 if TYPE_CHECKING:
     from qcodes.dataset.descriptions.versioning.rundescribertypes import Shapes
 
+log = logging.getLogger(__name__)
+
 ActionsT = Sequence[Callable[[], None]]
 BreakConditionT = Callable[[], bool]
 
@@ -35,13 +38,13 @@ AxesTupleList = Tuple[
 ]
 AxesTupleListWithDataSet = Tuple[
     DataSetProtocol,
-    List["matplotlib.axes.Axes"],
-    List[Optional["matplotlib.colorbar.Colorbar"]],
+    Tuple[Optional["matplotlib.axes.Axes"], ...],
+    Tuple[Optional["matplotlib.colorbar.Colorbar"], ...],
 ]
 MultiAxesTupleListWithDataSet = Tuple[
     Tuple[DataSetProtocol, ...],
-    Tuple[List["matplotlib.axes.Axes"], ...],
-    Tuple[List[Optional["matplotlib.colorbar.Colorbar"]], ...],
+    Tuple[Tuple["matplotlib.axes.Axes", ...], ...],
+    Tuple[Tuple[Optional["matplotlib.colorbar.Colorbar"], ...], ...],
 ]
 
 
@@ -96,13 +99,16 @@ def _handle_plotting(
         do_plot: Should a plot be produced
 
     """
+    res: AxesTupleListWithDataSet
     if do_plot:
         res = plot_and_save_image(data)
     else:
-        res = data, [None], [None]
+        res = data, (None,), (None,)
 
     if interrupted:
-        raise interrupted
+        log.warning(
+            f"Measurement has been interrupted, data may be incomplete: {interrupted}"
+        )
 
     return res
 

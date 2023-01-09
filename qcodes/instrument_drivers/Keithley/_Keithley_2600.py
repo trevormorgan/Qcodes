@@ -1,5 +1,6 @@
 import logging
 import struct
+import sys
 import warnings
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
@@ -17,6 +18,13 @@ from qcodes.parameters import (
     ParamRawDataType,
     create_on_off_val_mapping,
 )
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+
+    class StrEnum(str, Enum):
+        pass
 
 log = logging.getLogger(__name__)
 
@@ -200,10 +208,6 @@ class TimeAxis(Parameter):
         return np.linspace(0, dt * npts, npts, endpoint=False)
 
 
-class StrEnum(str, Enum):
-    pass
-
-
 class Keithley2600MeasurementStatus(StrEnum):
     """
     Keeps track of measurement status.
@@ -248,7 +252,9 @@ class _ParameterWithStatus(Parameter):
             for i in bin(int(float(meas_status))).replace("0b", "").zfill(16)[::-1]
         ]
 
-        status = _from_bits_tuple_to_status[(status_bits[0], status_bits[1])]
+        status = _from_bits_tuple_to_status[
+            (status_bits[0], status_bits[1])
+        ]  # pyright: ignore[reportGeneralTypeIssues]
 
         return float(value), status
 

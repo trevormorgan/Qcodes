@@ -32,18 +32,20 @@ jobs:
       PYTHON: ${{ matrix.python-version }}
 
     steps:
-    - uses: actions/checkout@v3.1.0
+    - uses: actions/checkout@v3.3.0
       with:
         submodules: true
     - name: setup ubuntu-latest xvfb
       uses: ./.github/actions/setup-ubuntu-latest-xvfb
     # install libhdf5-dev untill we have wheels for python 3.11
     - name: install libhdf5
-      run: sudo apt install libhdf5-dev
+      run: |
+        sudo apt update
+        sudo apt install libhdf5-dev
       shell: bash
       if: runner.os == 'Linux'
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4.3.0
+      uses: actions/setup-python@v4.3.1
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
@@ -60,14 +62,8 @@ jobs:
       run: mypy -p qcodes
     - name: Run parallel tests
       run: |
-        pytest -m "not serial" --cov=qcodes --cov-report xml --hypothesis-profile ci qcodes --csv test_durations.csv --csv-columns name,duration
+        pytest -m "not serial" --cov=qcodes --cov-report xml --hypothesis-profile ci  --durations=20 qcodes
 # a subset of the tests fails when run in parallel on Windows so run those in serial here
-    - name: Compare test duration time on linux py311 
-      if: $${{ runner.os == 'Linux' &&  matrix.python-version == "3.11"}}
-      uses: actions/upload-artifact@v3
-      with:
-        name: blueracer
-        path: test_durations.csv
     - name: Run serial tests
       run: |
         pytest -m "serial" -n 0 --dist no --cov=qcodes --cov-report xml --cov-append --hypothesis-profile ci qcodes

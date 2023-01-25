@@ -29,11 +29,11 @@ repos:
         args: [-i]
         additional_dependencies: [isort]
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.10.1
+    rev: v0.11
     hooks:
       - id: validate-pyproject
   - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.6.0
+    rev: 1.6.1
     hooks:
         - id: nbqa-pyupgrade
           args: ['--py38-plus']

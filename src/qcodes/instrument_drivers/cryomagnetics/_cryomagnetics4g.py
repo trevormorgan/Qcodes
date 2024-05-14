@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
+from string import ascii_letters
 from typing import Any
 
 from pyvisa import VisaIOError
@@ -12,16 +12,12 @@ from qcodes.validators import Enum, Numbers
 
 
 @dataclass
-class CryomagneticsOperatingState:
-    ramping: bool = False
-    holding: bool = False
-    standby: bool = False
+class CryomagneticsFailureConditions:
     quench_condition_present: bool = False
     power_module_failure: bool = False
 
     def can_start_ramping(self) -> bool:
         required_checks = [
-            "ramping",
             "quench_condition_present",
             "power_module_failure",
         ]
@@ -53,7 +49,6 @@ class CryomagneticsModel4G(VisaInstrument):
         coil_constant: The coil constant of the magnet in Tesla per Amp.
     """
 
-    KG_TO_TESLA: float = 0.1  # Constant for unit conversion
 
     def __init__(
         self,
@@ -69,7 +64,6 @@ class CryomagneticsModel4G(VisaInstrument):
         self.coil_constant = coil_constant
         self.max_current_limits = max_current_limits
 
-        # Initialize  rate manager based on hypothetical hardware specific limits
         # Initialize rate manager based on hypothetical hardware specific limits
         self._initialize_max_current_limits()
 
@@ -95,7 +89,7 @@ class CryomagneticsModel4G(VisaInstrument):
             name="field",
             unit="T",
             set_cmd=self.set_field,
-            get_cmd=self._get_field,
+            get_cmd=self.get_field,
             get_parser=float,
             vals=Numbers(-9.001, 9.001),
             docstring="Magnetic Field in Tesla",
@@ -113,7 +107,7 @@ class CryomagneticsModel4G(VisaInstrument):
         self.add_parameter(
             name="Vmag",
             unit="V",
-            get_cmd="VMAG?",
+            get_cmd=self._get_vmag,
             get_parser=float,
             vals=Numbers(-10, 10),
             docstring="Magnet sense voltage",
@@ -122,7 +116,7 @@ class CryomagneticsModel4G(VisaInstrument):
         self.add_parameter(
             name="Vout",
             unit="V",
-            get_cmd="VOUT?",
+            get_cmd=self._get_vout,
             get_parser=float,
             vals=Numbers(-12.8, 12.8),
             docstring="Magnet output voltage",
@@ -131,7 +125,7 @@ class CryomagneticsModel4G(VisaInstrument):
         self.add_parameter(
             name="Iout",
             unit="A",
-            get_cmd="IOUT?",
+            get_cmd=self._get_iout,
             get_parser=float,
             docstring="Magnet output field/current",
         )
@@ -141,6 +135,33 @@ class CryomagneticsModel4G(VisaInstrument):
         #  Set units to tesla by default
         self.units("T")
         self.connect_message()
+
+    def _get_vmag(self) -> float:
+        """
+        Get Vmag (magnet sense voltage).
+        """
+        output = self.ask("VMAG?")
+        letters = str.maketrans({c: None for c in ascii_letters})
+        output = output.translate(letters)
+        return float(output)
+
+    def _get_vout(self) -> float:
+        """
+        Get Vout (magnet output voltage).
+        """
+        output = self.ask("VOUT?")
+        letters = str.maketrans({c: None for c in ascii_letters})
+        output = output.translate(letters)
+        return float(output)
+
+    def _get_iout(self) -> float:
+        """
+        Get Iout (magnet output field/current).
+        """
+        output = self.ask("IOUT?")
+        letters = str.maketrans({c: None for c in ascii_letters})
+        output = output.translate(letters)
+        return float(output)
 
     def quenched_state_reset(self) -> None:
         """
@@ -172,55 +193,44 @@ class CryomagneticsModel4G(VisaInstrument):
         """
         self.write("*RST")
 
-    def magnet_operating_state(self) -> CryomagneticsOperatingState:
+    def check_failure_conditions(self) -> CryomagneticsFailureConditions:
         """
-        Retrieves the current operating state of the magnet.
+        Retrieves the current failure conditions of the magnet power supply.
 
         Returns:
-            CryomagneticsOperatingState: An object representing the current operating state of the magnet.
+            CryomagneticsFailureConditions: An object representing the current failure conditions of the magnet power supply.
 
         Raises:
-            Cryomagnetics4GException: If the magnet is in a state that prevents ramping, such as quench condition,
-                                       power module failure, or already ramping.
+            Cryomagnetics4GException: If the magnet power supply is in a state that prevents ramping, such as quench condition
+                                       or power module failure.
 
-        The operating state is determined by querying the status byte (`*STB?`) of the instrument. The status byte is
+        The failure conditions are determined by querying the status byte (`*STB?`) of the instrument. The status byte is
         interpreted as follows:
-        - Bit 0: Holding (not ramping)
-        - Bit 1: Ramping
-        - Bit 2: Standby
-        - Bit 4: Quench condition present
-        - Bit 8: Power module failure
+        - Bit 2: Quench condition present
+        - Bit 3: Power module failure
 
-        If the magnet is in a state that prevents ramping (quench condition, power module failure, or already ramping),
+        If the magnet power supply is in a state that prevents ramping (quench condition or power module failure),
         an exception is raised with an appropriate error message. The error message is also logged using the instrument's
         logger.
 
-        If the magnet is in a valid state for ramping, a CryomagneticsOperatingState object is returned, representing
-        the current operating state of the magnet.
+        If the magnet power supply is not experiencing any failure conditions, a CryomagneticsFailureConditions object is returned,
+        representing the current failure state of the magnet power supply.
         """
         status_byte = int(self.ask("*STB?"))
 
-        operating_state = CryomagneticsOperatingState(
-            holding=not bool(status_byte & 1) and not bool(status_byte & 2),
-            ramping=bool(status_byte & 1),
-            standby=bool(status_byte & 2),
+        operating_state = CryomagneticsFailureConditions(
             quench_condition_present=bool(status_byte & 4),
             power_module_failure=bool(status_byte & 8),
         )
 
         if operating_state.quench_condition_present:
             error_message = "Cannot ramp due to quench condition."
-            self.log.error(error_message)  # Log the error message
+            self.log.error(error_message)
             raise Cryomagnetics4GException(error_message)
 
         if operating_state.power_module_failure:
             error_message = "Cannot ramp due to power module failure."
-            self.log.error(error_message)  # Log the error message
-            raise Cryomagnetics4GException(error_message)
-
-        if operating_state.ramping:
-            error_message = "Cannot ramp as the power supply is already ramping."
-            self.log.error(error_message)  # Log the error message
+            self.log.error(error_message)
             raise Cryomagnetics4GException(error_message)
 
         return operating_state
@@ -250,7 +260,7 @@ class CryomagneticsModel4G(VisaInstrument):
 
         # Check if we can start ramping
         try:
-            state = self.magnet_operating_state()
+            state = self.check_failure_conditions()
         except Cryomagnetics4GException as e:
             self.log.error(f"Cannot set field: {e}")  # Log the specific error
             return
@@ -272,30 +282,31 @@ class CryomagneticsModel4G(VisaInstrument):
                 self.log.warning("Magnetic field is ramping but not currently blocked!")
                 return
 
-            # Otherwise, wait until no longer ramping
+            # Otherwise, wait until the field reaches the setpoint
             self.log.debug(
                 f"Starting blocking ramp of {self.name} to {field_setpoint} T"
             )
-            exit_state = self.wait_while_ramping(field_setpoint)
+            mag = self.field()
+            while abs(field_setpoint - mag) > 0.002:
+                time.sleep(5)
+                mag = self.field()
             self.log.debug("Finished blocking ramp")
-            # If we are now holding, it was successful
 
-            if not exit_state.holding:
-                msg = "_set_field({}) failed with state: {}"
-                raise Cryomagnetics4GException(msg.format(field_setpoint, exit_state))
-
-    def wait_while_ramping(
-        self, value: float, threshold: float = 1e-5
-    ) -> CryomagneticsOperatingState:
-        """Waits while the magnet is ramping, checking the status byte instead of field value."""
-        while True:
-            status_byte = int(self.ask("*STB?"))
-            if not bool(status_byte & 1):  # Check if ramping bit is clear
-                break
-            self._sleep(self.ramping_state_check_interval())
         self.write("SWEEP PAUSE")
-        self._sleep(1.0)
-        return self.magnet_operating_state()
+
+    def get_field(self) -> float:
+        """
+        Get field value
+
+        Args:
+            None
+        """
+        output = self.ask("IMAG?")
+        letters = str.maketrans({c: None for c in ascii_letters})
+        output = output.translate(letters)
+        if self.units() == "T":
+            return float(output) / 10  # convert to Tesla
+        return float(output)
 
     def _sleep(self, t: float) -> None:
         """
@@ -310,37 +321,6 @@ class CryomagneticsModel4G(VisaInstrument):
         else:
             time.sleep(t)
 
-    def _get_field(self) -> float:
-        current_value = self.ask("IMAG?")
-        # Define a regular expression to match the floating point number and the unit
-        match = re.match(
-            r"^([-+]?[0-9]*\.?[0-9]+)\s*([a-zA-Z]+)$", current_value.strip()
-        )
-
-        if not match:
-            raise ValueError(f"Invalid format for measurement: '{current_value}'")
-
-        raw_value, unit = match.groups()
-
-        # Convert the numeric part to float
-        try:
-            numeric_value = float(raw_value)
-        except ValueError:
-            raise ValueError(f"Unable to convert '{raw_value}' to float")
-
-        # Validate the unit part
-        if unit != "kG":
-            raise ValueError(f"Unexpected unit '{unit}'. Expected 'kG'")
-        if self.units() == "A":
-            raise ValueError(
-                "Current units are set to Amperes (A). Cannot retrieve magnetic field in these units."
-            )
-
-        # Return value in Tesla, only converting if necessary
-        if self.units() == "T":
-            return numeric_value * self.KG_TO_TESLA
-        else:
-            return numeric_value
 
     def _get_rate(self) -> float:
         """

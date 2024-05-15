@@ -185,7 +185,7 @@ class CryomagneticsModel4G(VisaInstrument):
         else:
             self.write("LOCAL")
 
-    def zero_current(self) -> None:
+    def zero(self) -> None:
         """
         Sets the device current to zero.
         """
@@ -344,7 +344,6 @@ class CryomagneticsModel4G(VisaInstrument):
         current_field = self.get_field()  # Get current field in Tesla
         current_in_amps = current_field * self.coil_constant  # Convert to Amps
 
-        # (Implement a  more efficient lookup method here if needed)
         for range_index, (upper_limit, max_rate) in self.max_current_limits.items():
             if current_in_amps <= upper_limit:
                 actual_rate = min(
@@ -357,7 +356,7 @@ class CryomagneticsModel4G(VisaInstrument):
 
     def _initialize_max_current_limits(self) -> None:
         """
-        Initialize the instrument with the provided current limits and rates.
+        Initialize the instrument with the provided current limits.
         """
         for range_index, (upper_limit, max_rate) in self.max_current_limits.items():
             self.write(f"RANGE {range_index} {upper_limit}")

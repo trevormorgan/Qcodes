@@ -60,7 +60,7 @@ class CryomagneticsModel4G(VisaInstrument):
         address: str,
         max_current_limits: dict[int, tuple[float, float]],
         coil_constant: float,
-        terminator: str = "\n",
+        terminator: str = "\r\n",
         **kwargs: Any,
     ):
         super().__init__(name, address, terminator=terminator, **kwargs)

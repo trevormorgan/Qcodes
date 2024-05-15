@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from dataclasses import dataclass
 from string import ascii_letters
 from typing import Any
@@ -328,10 +329,8 @@ class CryomagneticsModel4G(VisaInstrument):
         """
         Get the current ramp rate in Tesla per minute.
         """
-        # Get the rate from the instrument in Amps per second
         rate_amps_per_sec = float(self.ask("RATE?"))
-        # Convert to Tesla per minute
-        rate_tesla_per_min = rate_amps_per_sec * 60 / self.coil_constant
+        rate_tesla_per_min = rate_amps_per_sec * self.coil_constant * 60
         return rate_tesla_per_min
 
     def _set_rate(self, rate_tesla_per_min: float) -> None:
@@ -339,20 +338,48 @@ class CryomagneticsModel4G(VisaInstrument):
         Set the ramp rate in Tesla per minute.
         """
         # Convert from Tesla per minute to Amps per second
-        rate_amps_per_sec = rate_tesla_per_min * self.coil_constant / 60
-        # Find the appropriate range and set the rate
-        current_field = self.get_field()  # Get current field in Tesla
-        current_in_amps = current_field * self.coil_constant  # Convert to Amps
+        rate_amps_per_sec = rate_tesla_per_min / (self.coil_constant * 60)
+        # Get the current field in Tesla
+        current_field = self.get_field()
+        # Convert current field to Amps
+        current_in_amps = current_field / self.coil_constant
 
+        # Find the correct range for the current field
+        correct_range = None
         for range_index, (upper_limit, max_rate) in self.max_current_limits.items():
             if current_in_amps <= upper_limit:
-                actual_rate = min(
-                    rate_amps_per_sec, max_rate
-                )  # Ensure rate doesn't exceed maximum
-                self.write(f"RATE {range_index} {actual_rate}")
-                return
+                correct_range = (range_index, upper_limit, max_rate)
+                break
 
-        raise ValueError("Current field is outside of defined rate ranges")
+        if correct_range:
+            range_index, upper_limit, max_rate = correct_range
+            if rate_amps_per_sec > max_rate:
+                message = (
+                    f"Requested rate {rate_tesla_per_min} T/min exceeds the maximum rate "
+                    f"for the current range ({max_rate * self.coil_constant * 60} T/min). "
+                    f"Setting to the maximum rate."
+                )
+                warnings.warn(message, UserWarning)
+                self.log.warning(message)
+                actual_rate = max_rate
+            else:
+                actual_rate = rate_amps_per_sec
+
+            # Set the rate regardless of the upper or lower limit boundaries
+            self.write(f"RATE {range_index} {actual_rate}")
+        else:
+            available_ranges = ", ".join(
+                [
+                    f"{upper_limit}A"
+                    for upper_limit, _ in self.max_current_limits.values()
+                ]
+            )
+            error_message = (
+                f"Current field ({current_field} T, {current_in_amps} A) is outside defined rate ranges "
+                f"({available_ranges}). Please check the configuration."
+            )
+            self.log.error(error_message)
+            raise ValueError(error_message)
 
     def _initialize_max_current_limits(self) -> None:
         """

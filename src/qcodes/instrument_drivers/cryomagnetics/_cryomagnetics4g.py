@@ -49,6 +49,10 @@ class CryomagneticsModel4G(VisaInstrument):
         coil_constant: The coil constant of the magnet in Tesla per Amp.
     """
 
+    _KG_TO_T_FACTOR = 0.1  # 1 Tesla = 10 kiloGauss
+    _T_TO_KG_FACTOR = 10  # 1 Tesla = 10 kiloGauss
+    _RETRY_WRITE_ASK = True
+    _RETRY_TIME = 5
 
     def __init__(
         self,
@@ -235,27 +239,25 @@ class CryomagneticsModel4G(VisaInstrument):
 
         return operating_state
 
-    def set_field(self, field_setpoint: float, block: bool = True) -> None:
+    def set_field(self, value: float, block: bool = True) -> None:
         """
         Sets the magnetic field strength in Tesla using ULIM, LLIM, and SWEEP commands.
 
         Args:
-            field_setpoint: The desired magnetic field strength in Tesla.
+            value: The desired magnetic field strength in Tesla.
             block: If True, the method will block until the field reaches the setpoint.
 
         Raises:
             Cryo4GException: If the power supply is not in a state where it can start ramping.
         """
-        # Convert field setpoint to kG for the instrument
-        field_setpoint_kg = field_setpoint * 10
-        # Determine sweep direction based on setpoint and current field
+
         current_field = self.get_field()
 
-        self.log.debug(f"Current field: {current_field}, Setpoint: {field_setpoint_kg}")
+        self.log.debug(f"Current field: {current_field}, Field Setpoint: {value}")
 
-        if abs(field_setpoint_kg - current_field) < 1e-4:
+        if abs(value - current_field) < 1e-4:
             # Already at the setpoint, no need to sweep
-            self.log.info(f"Magnetic field is already set to {field_setpoint}T")
+            self.log.info(f"Magnetic field is already set to {value}T")
             return
 
         # Check if we can start ramping
@@ -266,14 +268,16 @@ class CryomagneticsModel4G(VisaInstrument):
             return
 
         if state.can_start_ramping():
-            if field_setpoint_kg < current_field:
+            # Field needs to be converted to kG for write commands
+            value_in_kG = value * self._T_TO_KG_FACTOR
+            if value < current_field:
                 sweep_direction = "DOWN"
-                self.write(f"LLIM {field_setpoint_kg}")
+                self.write(f"LLIM {value_in_kG}")
             else:
                 sweep_direction = "UP"
-                self.write(f"ULIM {field_setpoint_kg}")
+                self.write(f"ULIM {value_in_kG}")
 
-            self.log.debug(f"Sweeping {sweep_direction} to {field_setpoint_kg}")
+            self.log.debug(f"Sweeping {sweep_direction} to {value}")
 
             self.write(f"SWEEP {sweep_direction}")
 
@@ -283,13 +287,11 @@ class CryomagneticsModel4G(VisaInstrument):
                 return
 
             # Otherwise, wait until the field reaches the setpoint
-            self.log.debug(
-                f"Starting blocking ramp of {self.name} to {field_setpoint} T"
-            )
-            mag = self.field()
-            while abs(field_setpoint - mag) > 0.002:
+            self.log.debug(f"Starting blocking ramp of {self.name} to {value} T")
+
+            while abs(value - current_field) > 0.002:
                 time.sleep(5)
-                mag = self.field()
+                current_field = self.field()
             self.log.debug("Finished blocking ramp")
 
         self.write("SWEEP PAUSE")
@@ -305,7 +307,7 @@ class CryomagneticsModel4G(VisaInstrument):
         letters = str.maketrans({c: None for c in ascii_letters})
         output = output.translate(letters)
         if self.units() == "T":
-            return float(output) / 10  # convert to Tesla
+            return float(output) * self._KG_TO_T_FACTOR
         return float(output)
 
     def _sleep(self, t: float) -> None:
